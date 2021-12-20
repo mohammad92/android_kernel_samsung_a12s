@@ -256,9 +256,10 @@ static void get_chip_name(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
 	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
-	char buff[16] = { 0 };
+	char buff[7] = { 0 };
 
-	strncpy(buff, "TD4150", sizeof(buff));
+	input_info(true, tcm_hcd->pdev->dev.parent, "%s: %s\n", __func__, tcm_hcd->id_info.part_number);
+	snprintf(buff, sizeof(buff), "%s", tcm_hcd->id_info.part_number);
 
 	sec_cmd_set_default_result(sec);
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
@@ -455,6 +456,26 @@ static void get_gap_data_y_all(void *device_data)
 
 }
 
+static void run_fdm_noise_test_read(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
+	struct sec_factory_test_mode mode;
+	int sum;
+
+	sec_cmd_set_default_result(sec);
+
+	memset(&mode, 0x00, sizeof(struct sec_factory_test_mode));
+	syna_tcm_get_face_area(&sum, &mode);
+	input_info(true, tcm_hcd->pdev->dev.parent, "%d %d\n", mode.min, mode.max);
+
+	sec_cmd_set_cmd_result(sec, tcm_hcd->print_buf, strlen(tcm_hcd->print_buf));
+	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING)
+		sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "FDM_NOISE");
+
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+}
+
 static void factory_cmd_result_all(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
@@ -478,6 +499,53 @@ static void factory_cmd_result_all(void *device_data)
 
 	input_info(true, tcm_hcd->pdev->dev.parent,
 		"%s: %d%s\n", __func__, sec->item_count, sec->cmd_result_all);
+}
+
+static void factory_lcdoff_cmd_result_all(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
+
+	sec->item_count = 0;
+	memset(sec->cmd_result_all, 0x00, SEC_CMD_RESULT_STR_LEN);
+
+	sec->cmd_all_factory_state = SEC_CMD_STATUS_RUNNING;
+
+	run_dynamic_range_test_read(sec);
+	run_noise_test_read(sec);
+	run_fdm_noise_test_read(sec);
+
+	sec->cmd_all_factory_state = SEC_CMD_STATUS_OK;
+
+	input_info(true, tcm_hcd->pdev->dev.parent,
+				"%s: %d%s\n", __func__, sec->item_count, sec->cmd_result_all);
+}
+
+static void incell_power_control(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+
+	sec_cmd_set_default_result(sec);
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: invalid parameter %d\n", __func__);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	tcm_hcd->lcdoff_test = sec->cmd_param[0];
+
+	input_info(true, tcm_hcd->pdev->dev.parent, "%s : lcdoff_test %s\n",
+				__func__, tcm_hcd->lcdoff_test ? "ON" : "OFF");
+	snprintf(buff, sizeof(buff), "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+
+exit:
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
 }
 
 static void check_connection(void *device_data)
@@ -515,8 +583,8 @@ static void set_grip_data(void *device_data)
 	resp_buf = NULL;
 	resp_buf_size = 0;
 
-	if (tcm_hcd->lp_state == PWR_OFF) {
-		input_err(true, tcm_hcd->pdev->dev.parent, "%s: power off\n", __func__);
+	if (tcm_hcd->lp_state != PWR_ON) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: not power on\n", __func__);
 		goto exit;
 	}
 
@@ -586,6 +654,101 @@ static void aot_enable(void *device_data)
 	sec_cmd_set_cmd_exit(sec);
 }
 
+/*
+ *	cmd_param
+ *		[0], 0 normal debounce
+ *		     1 lower debounce
+ */
+static void set_sip_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	int retval;
+
+	sec_cmd_set_default_result(sec);
+
+	if (tcm_hcd->lp_state != PWR_ON) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: not power on\n", __func__);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: abnormal param[%d]\n", __func__, sec->cmd_param[0]);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	tcm_hcd->sip_mode = sec->cmd_param[0];
+
+	retval = tcm_hcd->set_dynamic_config(tcm_hcd, DC_SIP_MODE, tcm_hcd->sip_mode);
+	if (retval < 0) {
+		input_err(true, tcm_hcd->pdev->dev.parent,"%s: Failed to set sip\n", __func__);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	input_info(true, tcm_hcd->pdev->dev.parent, "%s : sip mode %s\n",
+				__func__, tcm_hcd->sip_mode ? "ON" : "OFF");
+	snprintf(buff, sizeof(buff), "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+
+exit:
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
+/*
+*	0 disable game mode
+*	1 enable game mode
+*/
+static void set_game_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct syna_tcm_hcd *tcm_hcd = container_of(sec, struct syna_tcm_hcd, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	int retval;
+
+	sec_cmd_set_default_result(sec);
+
+	if (tcm_hcd->lp_state != PWR_ON) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: not power on\n", __func__);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: abnormal param[%d]\n", __func__, sec->cmd_param[0]);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	tcm_hcd->game_mode = sec->cmd_param[0];
+
+	retval = tcm_hcd->set_dynamic_config(tcm_hcd, DC_GAME_MODE, tcm_hcd->game_mode);
+	if (retval < 0) {
+		input_err(true, tcm_hcd->pdev->dev.parent,"%s: Failed to set game mode\n", __func__);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto exit;
+	}
+
+	input_info(true, tcm_hcd->pdev->dev.parent, "%s : game mode %s\n",
+					__func__, tcm_hcd->game_mode ? "ON" : "OFF");
+	snprintf(buff, sizeof(buff), "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+
+exit:
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
 #if !defined(CONFIG_SEC_FACTORY)
 static void dead_zone_enable(void *device_data)
 {
@@ -627,28 +790,46 @@ static void ear_detect_enable(void *device_data)
 
 	sec_cmd_set_default_result(sec);
 
-	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
-		snprintf(buff, sizeof(buff), "NG");
-		sec->cmd_state = SEC_CMD_STATUS_FAIL;
-	} else {
-		tcm_hcd->ear_detect_enable = sec->cmd_param[0];
-		ret = tcm_hcd->set_dynamic_config(tcm_hcd, DC_ENABLE_FACE_DETECT, tcm_hcd->ear_detect_enable);
-		if (ret < 0) {
-			input_err(true, tcm_hcd->pdev->dev.parent,
-					"%s: Failed to enable ear detect mode\n", __func__);
-			snprintf(buff, sizeof(buff), "NG");
-			sec->cmd_state = SEC_CMD_STATUS_FAIL;
-		} else {
-			snprintf(buff, sizeof(buff), "OK");
-			sec->cmd_state = SEC_CMD_STATUS_OK;
-		}
+	if (!(sec->cmd_param[0] == 0 || sec->cmd_param[0] == 1 || sec->cmd_param[0] == 3)) {
+		input_err(true, tcm_hcd->pdev->dev.parent,
+					"%s: abnormal cmd parm[%d]!\n", __func__, sec->cmd_param[0]);
+		goto out;
 	}
 
+	tcm_hcd->ear_detect_enable = sec->cmd_param[0];
+
+	if (tcm_hcd->lp_state != PWR_ON) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: %s skip!(%d)\n",
+					__func__, tcm_hcd->lp_state == PWR_OFF ? "Power off" : "LP mode", tcm_hcd->lp_state);
+		goto out;
+	}
+
+	mutex_lock(&tcm_hcd->mode_change_mutex);
+	ret = tcm_hcd->set_dynamic_config(tcm_hcd, DC_ENABLE_FACE_DETECT, tcm_hcd->ear_detect_enable);
+	if (ret < 0) {
+		input_err(true, tcm_hcd->pdev->dev.parent,
+				"%s: Failed to enable ear detect mode\n", __func__);
+		mutex_unlock(&tcm_hcd->mode_change_mutex);
+		goto out;
+	}
+	mutex_unlock(&tcm_hcd->mode_change_mutex);
+
+
+	snprintf(buff, sizeof(buff), "OK");
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 	sec_cmd_set_cmd_exit(sec);
 
 	input_info(true, tcm_hcd->pdev->dev.parent, "%s: %s,%d\n", __func__, buff, tcm_hcd->ear_detect_enable);
+	return;
+
+out:
+	snprintf(buff, sizeof(buff), "%s", "NG");
+	sec->cmd_state = SEC_CMD_STATUS_FAIL;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+
+
 }
 
 static void prox_lp_scan_mode(void *device_data)
@@ -662,32 +843,48 @@ static void prox_lp_scan_mode(void *device_data)
 
 	if (!tcm_hcd->hw_if->bdata->prox_lp_scan_enabled) {
 		input_err(true, tcm_hcd->pdev->dev.parent, "%s: not support lp scan!\n", __func__);
-		goto out;
+		goto out_fail;
 	}
 
-	if (tcm_hcd->lp_state != LP_MODE) {
-		input_err(true, tcm_hcd->pdev->dev.parent, "%s: Not LP mode(%d)!\n", __func__, tcm_hcd->lp_state);
-		goto out;
+	if (tcm_hcd->early_resume_cnt > 0) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: already early resume called(%d)!\n",
+					__func__, tcm_hcd->early_resume_cnt);
+		goto out_fail;
 	}
 
 	if (!tcm_hcd->ear_detect_enable) {
 		input_err(true, tcm_hcd->pdev->dev.parent,
 					"%s: face detect is not enable, ignore this command\n", __func__);
-		goto out;
+		goto out_fail;
 	}
 
 	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
 		input_err(true, tcm_hcd->pdev->dev.parent, "%s: abnormal parm[%d]!\n", __func__, sec->cmd_param[0]);
+		goto out_fail;
+	}
+
+	if (tcm_hcd->lp_state == PWR_OFF) {
+		input_err(true, tcm_hcd->pdev->dev.parent, "%s: PWR OFF skip!\n", __func__);
+		goto out_fail;
+	}
+
+	if (tcm_hcd->lp_state == PWR_ON) {
+		input_info(true, tcm_hcd->pdev->dev.parent, "%s: save call cnt and handle later\n", __func__);
+		tcm_hcd->prox_lp_scan_cnt++;
 		goto out;
 	}
 
-	ret = tcm_hcd->set_dynamic_config(tcm_hcd, DC_START_STOP_TOUCH_WORK, sec->cmd_param[0] ? 1 : 0);
+	mutex_lock(&tcm_hcd->mode_change_mutex);
+	ret = syna_tcm_set_scan_start_stop_cmd(tcm_hcd, sec->cmd_param[0] ? 1 : 0);
 	if (ret < 0) {
 		input_err(true, tcm_hcd->pdev->dev.parent,
-			"Failed to write command %s\n", STR(DC_START_STOP_TOUCH_WORK));
+			"Failed to write command %s\n", STR(CMD_SET_SCAN_START_STOP));
+		mutex_unlock(&tcm_hcd->mode_change_mutex);
 		goto out;
 	}
+	mutex_unlock(&tcm_hcd->mode_change_mutex);
 
+out:
 	snprintf(buff, sizeof(buff), "%s", "OK");
 	sec->cmd_state =  SEC_CMD_STATUS_OK;
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
@@ -697,7 +894,7 @@ static void prox_lp_scan_mode(void *device_data)
 					__func__, sec->cmd_param[0] ? "SCAN START" : "SCAN STOP");
 
 	return;
-out:
+out_fail:
 	snprintf(buff, sizeof(buff), "%s", "NG");
 	sec->cmd_state = SEC_CMD_STATUS_FAIL;
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
@@ -763,6 +960,7 @@ static struct sec_cmd sec_cmds[] = {
 	{SEC_CMD("get_threshold", get_threshold),},
 	{SEC_CMD("get_x_num", get_x_num),},
 	{SEC_CMD("get_y_num", get_y_num),},
+	{SEC_CMD("get_chip_name", get_chip_name),},
 	{SEC_CMD("run_dynamic_range_test_read", run_dynamic_range_test_read),},
 	{SEC_CMD("run_dynamic_range_test_read_all", run_dynamic_range_test_read_all),},
 	{SEC_CMD("run_open_short_test_read", run_open_short_test_read),},
@@ -776,9 +974,13 @@ static struct sec_cmd sec_cmds[] = {
 	{SEC_CMD("get_crc_check", get_crc_check),},
 	{SEC_CMD("set_grip_data", set_grip_data),},
 	{SEC_CMD_H("aot_enable", aot_enable),},
+	{SEC_CMD("set_sip_mode", set_sip_mode),},
+	{SEC_CMD("set_game_mode", set_game_mode),},
 	{SEC_CMD_H("ear_detect_enable", ear_detect_enable),},
 	{SEC_CMD_H("prox_lp_scan_mode", prox_lp_scan_mode),},
 	{SEC_CMD("run_prox_intensity_read_all", cmd_run_prox_intensity_read_all),},
+	{SEC_CMD("incell_power_control", incell_power_control),},
+	{SEC_CMD("factory_lcdoff_cmd_result_all", factory_lcdoff_cmd_result_all),},
 #if !defined(CONFIG_SEC_FACTORY)	
 	{SEC_CMD("dead_zone_enable", dead_zone_enable),},
 #endif

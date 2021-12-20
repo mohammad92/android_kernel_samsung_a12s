@@ -252,6 +252,8 @@ enum dynamic_config_id {
 	DC_ENABLE_DEADZONE = 0xCF,
 	DC_ENABLE_FACE_DETECT = 0xD0,
 	DC_START_STOP_TOUCH_WORK = 0xD8,
+	DC_SIP_MODE = 0xD9,
+	DC_GAME_MODE = 0xDA,
 };
 
 enum cmd {
@@ -295,6 +297,7 @@ enum cmd {
 	CMD_SPI_MASTER_WRITE_THEN_READ_EXTENDED = 0x43,
 	CMD_ENTER_IO_BRIDGE_MODE = 0x44,
 	CMD_ROMBOOT_DOWNLOAD = 0x45,
+	CMD_SET_SCAN_START_STOP = 0xb0,
 	CMD_GET_FACE_AREA = 0xC3,	// 195
 };
 
@@ -478,8 +481,11 @@ struct syna_tcm_hcd {
 	bool irq_enabled;
 	bool in_hdl_mode;
 	bool is_detected;
+	bool boot_resume;
 	unsigned int wakeup_gesture_enabled;
 	unsigned int lp_state;
+	unsigned int early_resume_cnt;
+	unsigned int prox_lp_scan_cnt;
 	unsigned char finger_state[MAX_FINGER_NUM];
 	unsigned int finger_x[MAX_FINGER_NUM];
 	unsigned int finger_y[MAX_FINGER_NUM];
@@ -518,6 +524,7 @@ struct syna_tcm_hcd {
 	struct mutex rw_ctrl_mutex;
 	struct mutex command_mutex;
 	struct mutex identify_mutex;
+	struct mutex mode_change_mutex;
 	struct delayed_work polling_work;
 	struct workqueue_struct *polling_workqueue;
 	struct task_struct *notifier_thread;
@@ -556,6 +563,9 @@ struct syna_tcm_hcd {
 	long prox_power_off;
 	u8 hover_event;	//virtual_prox
 	bool aot_enable;
+	int sip_mode;
+	int game_mode;
+	bool lcdoff_test;
 	const struct syna_tcm_hw_interface *hw_if;
 	int (*reset)(struct syna_tcm_hcd *tcm_hcd);
 	int (*reset_n_reinit)(struct syna_tcm_hcd *tcm_hcd, bool hw, bool update_wd);
@@ -799,6 +809,8 @@ static inline unsigned int ceil_div(unsigned int dividend, unsigned divisor)
 {
 	return (dividend + divisor - 1) / divisor;
 }
+
+extern int syna_tcm_set_scan_start_stop_cmd(struct syna_tcm_hcd *tcm_hcd, unsigned char value);
 
 #if defined(CONFIG_EXYNOS_DPU30)
 int get_lcd_info(char *arg);

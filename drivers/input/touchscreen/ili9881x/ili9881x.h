@@ -155,6 +155,7 @@
 /* Path */
 #define CHIP_ID_9882			"9882"
 #define CHIP_ID_7806S			"7806s"
+#define CHIP_ID_7807S			"7807s"
 #define CHIP_ID_9882Q			"9882q"
 #define INI_PATH_SIZE			64
 #define DEBUG_DATA_FILE_SIZE		(10*K)
@@ -210,6 +211,10 @@ do {									\
 #define NONE			-1
 #define DO_SPI_RECOVER		-2
 #define DO_I2C_RECOVER		-3
+
+#ifdef CONFIG_BATTERY_SAMSUNG
+extern unsigned int lpcharge;
+#endif
 
 enum TP_SPI_CLK_LIST {
 	TP_SPI_CLK_1M = 1000000,
@@ -971,6 +976,7 @@ struct ilitek_ts_data {
 	int tp_int;
 	int cs_gpio;
 	int wait_int_timeout;
+	int lcd_rst_delay;
 
 	u32 lcd_id;
 	int lcd_id1_gpio;

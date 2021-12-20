@@ -340,7 +340,7 @@ static int touch_parse_report(void)
 		code = config_data[idx++];
 
 		if (tcm_hcd->lp_state == LP_MODE && tcm_hcd->prox_power_off && code != TOUCH_FACE_DETECT) {
-			input_info(true, tcm_hcd->pdev->dev.parent, "%s: LPM && prox_power_off && !TOUCH_FACE_DETECT\n", __func__);
+//			input_info(true, tcm_hcd->pdev->dev.parent, "%s: LPM && prox_power_off && !TOUCH_FACE_DETECT\n", __func__);
 			bits = config_data[idx++];
 			offset += bits;
 			continue;
@@ -657,7 +657,7 @@ static int touch_parse_report(void)
 			}
 
 			// for debug have to check it!
-			input_info(true, tcm_hcd->pdev->dev.parent, "%s: show all hover %d\n", __func__, data);
+//			input_info(false, tcm_hcd->pdev->dev.parent, "%s: show all hover %d\n", __func__, data);
 			if (tcm_hcd->hw_if->bdata->support_ear_detect) {
 				if (touch_data->fd_data != data) {
 					input_info(true, tcm_hcd->pdev->dev.parent, "%s: hover %d\n", __func__, data);

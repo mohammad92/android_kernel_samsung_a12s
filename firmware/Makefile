@@ -13,11 +13,12 @@ fwabs := $(addprefix $(srctree)/,$(filter-out /%,$(fwdir)))$(filter /%,$(fwdir))
 fw-shipped-$(CONFIG_TOUCHSCREEN_SEC_TS_A552) += tsp_sec/hero2la.bin
 fw-shipped-$(CONFIG_TOUCHSCREEN_SEC_TS) += tsp_sec/y761_dream1.fw
 
-fw-external-$(CONFIG_TOUCHSCREEN_SYNAPTICS_TCM) += tsp_synaptics/td4150_a21s.bin tsp_synaptics/td4150_a12s_boe.bin
+fw-external-$(CONFIG_TOUCHSCREEN_SYNAPTICS_TCM) += tsp_synaptics/td4150_a21s.bin tsp_synaptics/td4150_a12s_boe.bin \
+														tsp_synaptics/td4375_a12s_boe.bin tsp_synaptics/td4160_a12s_boe.bin
 fw-external-$(CONFIG_TOUCHSCREEN_HIMAX_CHIPSET) += tsp_himax/hx83112a_a21s.bin
 
 fw-external-$(CONFIG_TOUCHSCREEN_ILITEK_ILI9881X) += tsp_ilitek/ili9881x_m12s.hex tsp_ilitek/ili7806s_m12s.hex \
-														tsp_ilitek/ili9882_a12s.hex
+														tsp_ilitek/ili9882_a12s.hex tsp_ilitek/ili7807s_a12s.hex
 fw-external-$(CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI) += tsp_novatek/nt36525_m12s_csot.bin tsp_novatek/nt36525_m12s_mp_csot.bin \
 														tsp_novatek/nt36525_m12s_dtc.bin tsp_novatek/nt36525_m12s_mp_dtc.bin \
 														tsp_novatek/nt36675_m12s_ltps.bin tsp_novatek/nt36675_m12s_mp_ltps.bin \

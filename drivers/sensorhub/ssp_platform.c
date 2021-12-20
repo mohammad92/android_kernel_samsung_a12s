@@ -105,7 +105,7 @@ void save_ram_dump(void *ssp_data)
 	}
 
 	ssp_infof("");
-	write_ssp_dump_file(data, (char *)ipc_get_base(IPC_REG_DUMP), ipc_get_chub_mem_size(), 0);
+	write_ssp_dump_file(data, (char *)ipc_get_base(IPC_REG_DUMP), ipc_get_chub_mem_size(), 0, 1);
 	contexthub_put_token(ipc);
 }
 
@@ -139,7 +139,7 @@ void ssp_dump_write_file(void *dump_data, int dump_size, int err_type)
 			return;
 	}
 
-	write_ssp_dump_file(data, (char *)dump_data, dump_size, dump_type);
+	write_ssp_dump_file(data, (char *)dump_data, dump_size, dump_type, 1);
 }
 
 bool is_sensorhub_working(void *ssp_data)

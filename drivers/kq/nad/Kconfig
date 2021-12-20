@@ -84,7 +84,7 @@ config SEC_KQ_BPS_RESULT
 
 config SEC_KQ_NAD_TEST
 	bool "KUnit test for NAD"
-	depends on KUNIT && SEC_KQ_NAD
+	depends on SEC_KUNIT && SEC_KQ_NAD
 	help
 	  KQ NAD Unit Test for improve stability of code
 	  KQ NAD Unit Test under User Mode Linux

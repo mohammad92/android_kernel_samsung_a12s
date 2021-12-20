@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2021 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -55,6 +55,8 @@
 /* (RFC3662) */
 #define CS1		0x08
 
+#define SLSI_TX_TIMEOUT    (5 * HZ)
+
 #ifdef CONFIG_SCSC_WLAN_RX_NAPI
 #ifdef CONFIG_SOC_EXYNOS9630
 static uint napi_cpu_big_tput_in_mbps = 400;
@@ -73,6 +75,11 @@ static uint rps_enable_tput_in_mbps = 100;
 #endif
 module_param(rps_enable_tput_in_mbps, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(rps_enable_tput_in_mbps, "throughput (in Mbps) to enable RPS");
+#endif
+#ifdef CONFIG_SCSC_WLAN_RX_NAPI_GRO
+static unsigned long gro_flush_timeout = 4000;
+module_param(gro_flush_timeout, ulong, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(gro_flush_timeout, "GRO timeout (in ns)");
 #endif
 #ifndef CONFIG_ARM
 static bool tcp_ack_suppression_disable;
@@ -270,6 +277,9 @@ static int slsi_net_open(struct net_device *dev)
 	struct net_device *nan_dev;
 	struct netdev_vif *nan_ndev_vif;
 #endif
+#if defined(CONFIG_SCSC_WLAN_WIFI_SHARING) || defined(CONFIG_SCSC_WLAN_DUAL_STATION)
+	u8 mhs_or_dual_sta_mac[ETH_ALEN];
+#endif
 
 	if (WARN_ON(ndev_vif->is_available))
 		return -EINVAL;
@@ -322,7 +332,8 @@ static int slsi_net_open(struct net_device *dev)
 		/* EXOR 5th byte with 0x80 */
 		sdev->netdev_addresses[SLSI_NET_INDEX_P2PX_SWLAN][4] ^= 0x80;
 #if CONFIG_SCSC_WLAN_MAX_INTERFACES >= 4 && defined(CONFIG_SCSC_WIFI_NAN_ENABLE)
-		slsi_net_randomize_nmi_ndi(sdev);
+		if (slsi_get_nan_mac_random())
+			slsi_net_randomize_nmi_ndi(sdev);
 #endif
 		sdev->initial_scan = true;
 #ifdef CONFIG_SCSC_WIFI_NAN_ENABLE
@@ -336,15 +347,29 @@ static int slsi_net_open(struct net_device *dev)
 	memset(dev_addr_zero_check, 0, ETH_ALEN);
 	if (!memcmp(dev->dev_addr, dev_addr_zero_check, ETH_ALEN)) {
 #if defined(CONFIG_SCSC_WLAN_WIFI_SHARING) || defined(CONFIG_SCSC_WLAN_DUAL_STATION)
-		if (SLSI_IS_VIF_INDEX_MHS(sdev, ndev_vif))
-			SLSI_ETHER_COPY(dev->dev_addr, sdev->netdev_addresses[SLSI_NET_INDEX_P2P]);
-		else
+		if (SLSI_IS_VIF_INDEX_MHS_DUALSTA(sdev, ndev_vif)) {
+			SLSI_ETHER_COPY(mhs_or_dual_sta_mac, sdev->netdev_addresses[SLSI_NET_INDEX_P2PX_SWLAN]);
+			mhs_or_dual_sta_mac[2] ^= 0x80;
+			SLSI_ETHER_COPY(dev->dev_addr, mhs_or_dual_sta_mac);
+		} else {
 			SLSI_ETHER_COPY(dev->dev_addr, sdev->netdev_addresses[ndev_vif->ifnum]);
+		}
 #else
 		SLSI_ETHER_COPY(dev->dev_addr, sdev->netdev_addresses[ndev_vif->ifnum]);
 #endif
 	}
+#if defined(CONFIG_SCSC_WLAN_WIFI_SHARING) || defined(CONFIG_SCSC_WLAN_DUAL_STATION)
+	if (!SLSI_IS_VIF_INDEX_MHS_DUALSTA(sdev, ndev_vif)) {
+		SLSI_ETHER_COPY(dev->perm_addr, sdev->netdev_addresses[ndev_vif->ifnum]);
+	} else {
+		SLSI_ETHER_COPY(mhs_or_dual_sta_mac, sdev->netdev_addresses[SLSI_NET_INDEX_P2PX_SWLAN]);
+		mhs_or_dual_sta_mac[2] ^= 0x80;
+		SLSI_ETHER_COPY(dev->perm_addr, mhs_or_dual_sta_mac);
+	}
+#else
 	SLSI_ETHER_COPY(dev->perm_addr, sdev->netdev_addresses[ndev_vif->ifnum]);
+#endif
+
 	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
 
 	reinit_completion(&ndev_vif->sig_wait.completion);
@@ -430,6 +455,42 @@ static struct net_device_stats *slsi_net_get_stats(struct net_device *dev)
 
 	SLSI_NET_DBG4(dev, SLSI_NETDEV, "\n");
 	return &ndev_vif->stats;
+}
+
+static void slsi_netif_show_stats(struct net_device *dev)
+{
+	struct net_device_stats *stats;
+
+	stats = slsi_net_get_stats(dev);
+	if (!stats) {
+		SLSI_NET_ERR(dev, "Can't get stats of %s\n", dev->name);
+		return;
+	}
+
+	SLSI_NET_INFO(dev, "[tx]bytes %lu packets %lu err %lu drop %lu fifo %lu colls %lu carrier %lu comp %lu\n",
+			stats->tx_bytes, stats->tx_packets, stats->tx_errors, stats->tx_dropped, stats->tx_fifo_errors,
+			stats->collisions, stats->tx_carrier_errors, stats->tx_compressed);
+	SLSI_NET_INFO(dev, "[rx]bytes %lu packets %lu err %lu drop %lu fifo %lu frame %lu comp %lu mc %lu\n",
+			stats->rx_bytes, stats->rx_packets, stats->rx_errors, stats->rx_dropped, stats->tx_fifo_errors,
+			stats->rx_frame_errors, stats->rx_compressed, stats->multicast);
+}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
+static void slsi_net_tx_timeout(struct net_device *dev, unsigned int txqueue)
+#else
+static void slsi_net_tx_timeout(struct net_device *dev)
+#endif
+{
+	if (!net_ratelimit())
+		return;
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
+	SLSI_NET_ERR(dev, "Transmit Timed Out!!! name %s state 0x%lx txq %u\n", dev->name, dev->state, txqueue);
+#else
+	SLSI_NET_ERR(dev, "Transmit Timed Out!!! name %s state 0x%lx\n", dev->name, dev->state);
+#endif
+
+	slsi_netif_show_stats(dev);
 }
 
 #ifdef CONFIG_SCSC_USE_WMM_TOS
@@ -1230,6 +1291,7 @@ static const struct net_device_ops slsi_netdev_ops = {
 	.ndo_stop         = slsi_net_stop,
 	.ndo_start_xmit   = slsi_net_hw_xmit,
 	.ndo_do_ioctl     = slsi_net_ioctl,
+	.ndo_tx_timeout   = slsi_net_tx_timeout,
 	.ndo_get_stats    = slsi_net_get_stats,
 	.ndo_select_queue = slsi_net_select_queue,
 	.ndo_fix_features = slsi_net_fix_features,
@@ -1245,6 +1307,10 @@ static void slsi_if_setup(struct net_device *dev)
 	dev->needs_free_netdev = true;
 #else
 	dev->destructor = free_netdev;
+#endif
+	dev->watchdog_timeo = SLSI_TX_TIMEOUT;
+#ifdef CONFIG_SCSC_WLAN_RX_NAPI_GRO
+	dev->gro_flush_timeout = gro_flush_timeout;
 #endif
 }
 

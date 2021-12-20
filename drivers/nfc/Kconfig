@@ -71,6 +71,14 @@ config NFC_PN547_LDO_CONTROL
 	  Say Y here to compile support for NXP PN547 LDO CONTROL feature into the
 	  kernel.
 
+config NFC_PVDD_LATE_ENABLE
+        bool "PVDD late enable"
+        default n
+        help
+          If lpcharge value is not usable,
+          then PVDD is enabled lately by init.nfc.samsung.rc on late-init.
+          And this should be enabled from S os projects.
+
 config ESE_SECURE
         bool "ese secure"
         depends on !SEC_FACTORY
@@ -118,3 +126,19 @@ config STAR_K250A
         help
           S.LSI k250a driver except ISO7816 protocol layer
           This driver provides support for S.LSI k250a product.
+
+config NFC_QTI_I2C
+        tristate "QTI NCI based NFC I2C Driver for SNxxx"
+        depends on I2C
+        help
+          This enables the NFC driver for SNxxx based devices.
+          This is for I2C connected version. NCI protocol logic
+          resides in the usermode and it has no other NFC dependencies.
+
+          If unsure, say N.
+
+config SEC_NFC_COMPAT_IOCTL
+        bool "NFC compat ioctl"
+        default n
+        help
+          Enable NFC compat ioctl.

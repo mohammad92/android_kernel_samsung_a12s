@@ -48,6 +48,6 @@ int cpu_speedup_disable(struct boosting_config *boosting);
 void enable_fp_debug_timer(struct debug_logger *logger);
 void disable_fp_debug_timer(struct debug_logger *logger);
 int set_fp_debug_timer(struct debug_logger *logger,
-					void (*func)(struct work_struct *work));
+			void (*func)(struct work_struct *work));
 
 #endif /* _FINGERPRINT_COMMON_H_ */

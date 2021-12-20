@@ -48,7 +48,9 @@
 #include "p61.h"
 #include "pn547.h"
 #include "cold_reset.h"
+#ifdef CONFIG_SEC_NFC_LOGGER
 #include "./nfc_logger/nfc_logger.h"
+#endif
 #if defined(CONFIG_ESE_SECURE) && defined(CONFIG_ESE_USE_TZ_API)
 #include "../misc/tzdev/include/tzdev/tee_client_api.h"
 #endif
@@ -993,11 +995,14 @@ static int p61_probe(struct device *dev)
 
 	dev_set_drvdata(dev, p61_dev);
 #if defined(CONFIG_NFC_FEATURE_SN100U)
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG) && !defined(CONFIG_NFC_PVDD_LATE_ENABLE)
 	if (lpcharge)
 		ese_set_spi_configuration("lpm");
 	else
 #endif
+	if (p61_dev->ap_vendor == AP_VENDOR_MTK)
+		ese_set_spi_configuration("lpm");
+	else
 		ese_set_spi_configuration("sleep");
 #else
 #if !defined(CONFIG_ESE_SECURE)
@@ -1014,7 +1019,7 @@ static int p61_probe(struct device *dev)
 	wake_lock_init(&p61_dev->ese_lock, WAKE_LOCK_SUSPEND, "ese_wake_lock");
 	p61_dev->device_opened = false;
 
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG) && !defined(CONFIG_NFC_PVDD_LATE_ENABLE)
 	if (!lpcharge) {
 #else
 	{

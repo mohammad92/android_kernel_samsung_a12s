@@ -1697,18 +1697,42 @@ static void sm5714_fg_get_atomic_capacity(
 	fuelgauge->capacity_old = val->intval;
 }
 
+static int sm5714_fg_check_capacity_max(
+	int capacity_max, int cap_max, int cap_margin)
+{
+	int cap_min = 0;
+
+	cap_min = (cap_max - cap_margin);
+
+	return (capacity_max < cap_min) ? cap_min :
+		((capacity_max >= cap_max) ? cap_max : capacity_max);
+}
+
 static int sm5714_fg_calculate_dynamic_scale(
 	struct sm5714_fuelgauge_data *fuelgauge, int capacity)
 {
 	union power_supply_propval raw_soc_val;
 	raw_soc_val.intval = sm5714_get_soc(fuelgauge);
 
-	fuelgauge->capacity_max =
-		(raw_soc_val.intval * 100 / (capacity + 1));
-	fuelgauge->capacity_old = capacity;
+	if (raw_soc_val.intval <
+		fuelgauge->pdata->capacity_max -
+		fuelgauge->pdata->capacity_max_margin) {
+		pr_info("%s: raw soc(%d) is very low, skip routine\n",
+			__func__, raw_soc_val.intval);
+	} else {
+		fuelgauge->capacity_max =
+			(raw_soc_val.intval * 100 / (capacity + 1));
+		fuelgauge->capacity_old = capacity;
 
-	pr_info("%s: %d is used for capacity_max, capacity(%d)\n",
-		__func__, fuelgauge->capacity_max, capacity);
+		fuelgauge->capacity_max =
+			sm5714_fg_check_capacity_max(
+				fuelgauge->capacity_max,
+				fuelgauge->pdata->capacity_max,
+				fuelgauge->pdata->capacity_max_margin);
+
+		pr_info("%s: %d is used for capacity_max, capacity(%d)\n",
+			__func__, fuelgauge->capacity_max, capacity);
+	}
 
 	return fuelgauge->capacity_max;
 }
@@ -2121,7 +2145,11 @@ static int sm5714_fg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
 		pr_info("%s: capacity_max changed, %d -> %d\n",
 			__func__, fuelgauge->capacity_max, val->intval);
-		fuelgauge->capacity_max = val->intval;
+		fuelgauge->capacity_max =
+			sm5714_fg_check_capacity_max(
+				val->intval,
+				fuelgauge->pdata->capacity_max,
+				fuelgauge->pdata->capacity_max_margin);
 		fuelgauge->initial_update_of_soc = true;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_ENABLED:
@@ -2305,14 +2333,21 @@ static int sm5714_fuelgauge_parse_dt(struct sm5714_fuelgauge_data *fuelgauge)
 		if (ret < 0)
 			pr_err("%s error reading capacity_max %d\n", __func__, ret);
 
+		ret = of_property_read_u32(np, "fuelgauge,capacity_max_margin",
+				&fuelgauge->pdata->capacity_max_margin);
+		if (ret < 0) {
+			pr_err("%s error reading capacity_max_margin %d\n", __func__, ret);
+			fuelgauge->pdata->capacity_max_margin = 300;
+		}
+
 		ret = of_property_read_u32(np, "fuelgauge,capacity_min",
 				&fuelgauge->pdata->capacity_min);
 		if (ret < 0)
 			pr_err("%s error reading capacity_min %d\n", __func__, ret);
 
-		pr_info("%s: capacity_max: %d, "
-				"capacity_min: %d\n", __func__, fuelgauge->pdata->capacity_max,
-				fuelgauge->pdata->capacity_min);
+		pr_info("%s: capacity_max: %d, capacity_min: %d, capacity_max_margin: %d\n",
+			__func__, fuelgauge->pdata->capacity_max, fuelgauge->pdata->capacity_min,
+			fuelgauge->pdata->capacity_max_margin);
 
 		ret = of_property_read_u32(np, "fuelgauge,capacity_calculation_type",
 				&fuelgauge->pdata->capacity_calculation_type);

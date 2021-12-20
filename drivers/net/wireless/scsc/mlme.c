@@ -45,8 +45,19 @@ static struct sk_buff *slsi_mlme_wait_for_cfm(struct slsi_dev *sdev, struct slsi
 {
 	struct sk_buff *cfm = NULL;
 	int            tm;
+	int            r;
 
+#ifdef CONFIG_SCSC_WLAN_RX_NAPI
+	tm = wait_for_completion_timeout(&sig_wait->completion, msecs_to_jiffies(*sdev->sig_wait_cfm_timeout - (*sdev->sig_wait_cfm_timeout >> 2)));
+	if (tm == 0) {
+		SLSI_ERR(sdev, "Waiting cfm(0x%.4X) for req(0x%04X) senderid=0x%x, trying to schedule wq manually\n", sig_wait->cfm_id, sig_wait->req_id, sig_wait->process_id);
+		slsi_hip_reprocess_skipped_ctrl_bh(sdev);
+		tm = wait_for_completion_timeout(&sig_wait->completion, msecs_to_jiffies(*sdev->sig_wait_cfm_timeout >> 2));
+	}
+#else
 	tm = wait_for_completion_timeout(&sig_wait->completion, msecs_to_jiffies(*sdev->sig_wait_cfm_timeout));
+#endif
+
 	spin_lock_bh(&sig_wait->send_signal_lock);
 
 	/* Confirm timed out? */
@@ -61,7 +72,14 @@ static struct sk_buff *slsi_mlme_wait_for_cfm(struct slsi_dev *sdev, struct slsi
 					 sig_wait->cfm_id, sig_wait->req_id);
 
 				spin_unlock_bh(&sig_wait->send_signal_lock);
-				slsi_sm_service_failed(sdev, reason);
+				/* Stop sending signals down*/
+				sdev->mlme_blocked = true;
+				queue_work(sdev->device_wq, &sdev->trigger_wlan_fail_work);
+				r = wait_for_completion_timeout(&sdev->service_fail_started_indication,
+							msecs_to_jiffies(SLSI_WLAN_FAIL_WORK_TIMEOUT));
+				if (r == 0)
+					SLSI_INFO(sdev, "service_fail_started_indication timeout\n");
+
 				spin_lock_bh(&sig_wait->send_signal_lock);
 			}
 		} else {
@@ -95,6 +113,7 @@ static struct sk_buff *slsi_mlme_wait_for_ind(struct slsi_dev *sdev, struct net_
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
 	struct sk_buff    *ind = NULL;
 	int               tm = 0;
+	int               r = 0;
 
 	/* The indication and confirm may have been received in the same HIP read.
 	 * The HIP receive buffer processes all received signals in one thread whilst the
@@ -124,7 +143,13 @@ static struct sk_buff *slsi_mlme_wait_for_ind(struct slsi_dev *sdev, struct net_
 					 sig_wait->ind_id, sig_wait->req_id);
 
 				spin_unlock_bh(&sig_wait->send_signal_lock);
-				slsi_sm_service_failed(sdev, reason);
+				/* Stop sending signals down*/
+				sdev->mlme_blocked = true;
+				queue_work(sdev->device_wq, &sdev->trigger_wlan_fail_work);
+				r = wait_for_completion_timeout(&sdev->service_fail_started_indication,
+								msecs_to_jiffies(SLSI_WLAN_FAIL_WORK_TIMEOUT));
+				if (r == 0)
+					SLSI_INFO(sdev, "service_fail_started_indication timeout\n");
 				spin_lock_bh(&sig_wait->send_signal_lock);
 			}
 		} else {
@@ -1395,6 +1420,8 @@ int slsi_mlme_add_sched_scan(struct slsi_dev                    *sdev,
 	size_t                             alloc_data_size = 0;
 	u32                                i, j;
 	u32                                num_ssid_filter_elements = 0;
+	u8                                 *default_ies = NULL;
+	int                                default_ie_len = 0;
 
 	/* Scan Timing IE: default values */
 	u8 scan_timing_ie[] = {
@@ -1441,9 +1468,14 @@ int slsi_mlme_add_sched_scan(struct slsi_dev                    *sdev,
 		}
 	}
 #endif
+	if (sdev->default_scan_ies_len > 0)
+		default_ies = slsi_get_scan_extra_ies(sdev, ies, ies_len, &default_ie_len);
 
 	alloc_data_size += sizeof(scan_timing_ie) + ies_len + SLSI_SCAN_PRIVATE_IE_CHANNEL_LIST_HEADER_LEN +
 					(request->n_channels * SLSI_SCAN_CHANNEL_DESCRIPTOR_SIZE);
+
+	if (default_ies && default_ie_len > 0)
+		alloc_data_size += default_ie_len;
 
 	for (i = 0; i < request->n_ssids; i++) {
 		/* 2 bytes for SSID EID and length field +  variable length SSID */
@@ -1466,8 +1498,10 @@ int slsi_mlme_add_sched_scan(struct slsi_dev                    *sdev,
 				  request->n_ssids,
 				  request->ssids,
 				  req);
-	if (r)
+	if (r) {
+		kfree(default_ies);
 		return r;
+	}
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 #ifdef CONFIG_SCSC_WLAN_EXPONENTIAL_SCHED_SCAN
@@ -1493,6 +1527,11 @@ int slsi_mlme_add_sched_scan(struct slsi_dev                    *sdev,
 
 	fapi_append_data(req, scan_timing_ie, sizeof(scan_timing_ie));
 	fapi_append_data(req, ies, ies_len);
+	if (default_ies != NULL && default_ie_len > 0) {
+		SLSI_NET_DBG3(dev, SLSI_MLME, "Appending default_ie_len %d\n", default_ie_len);
+		fapi_append_data(req, default_ies, default_ie_len);
+		kfree(default_ies);
+	}
 
 	if (request->n_match_sets) {
 		struct cfg80211_match_set *match_sets = request->match_sets;
@@ -1558,6 +1597,8 @@ int slsi_mlme_add_scan(
 	int               r = 0;
 	size_t            alloc_data_size = 0;
 	u32               i;
+	u8                *default_ies = NULL;
+	int               default_ie_len = 0;
 
 	/* Scan Timing IE: default values */
 	u8 scan_timing_ie[] = {
@@ -1585,16 +1626,23 @@ int slsi_mlme_add_scan(
 	SLSI_INFO(sdev, "scan started for id:0x%x, n_channels:%d, n_ssids:%d, scan_type:%d\n",
 		  (ndev_vif->ifnum << 8 | SLSI_SCAN_HW_ID), n_channels, n_ssids, scan_type);
 
+	if (!gscan && sdev->default_scan_ies_len > 0)
+		default_ies = slsi_get_scan_extra_ies(sdev, ies, ies_len, &default_ie_len);
+
 	alloc_data_size += sizeof(scan_timing_ie) +
 					ies_len +
 					(SLSI_SCAN_PRIVATE_IE_CHANNEL_LIST_HEADER_LEN + (n_channels * SLSI_SCAN_CHANNEL_DESCRIPTOR_SIZE));
+	if (!gscan && default_ies != NULL && default_ie_len > 0)
+		alloc_data_size += default_ie_len;
 
 	for (i = 0; i < n_ssids; i++)
 		alloc_data_size += 2 + ssids[i].ssid_len; /* 2: SSID EID + len */
 
 	req = fapi_alloc(mlme_add_scan_req, MLME_ADD_SCAN_REQ, 0, alloc_data_size);
-	if (!req)
+	if (!req) {
+		kfree(default_ies);
 		return -ENOMEM;
+	}
 
 	if (!gscan) {
 		r =  slsi_set_scan_params(
@@ -1610,6 +1658,11 @@ int slsi_mlme_add_scan(
 
 		fapi_append_data(req, scan_timing_ie, sizeof(scan_timing_ie));
 		fapi_append_data(req, ies, ies_len);
+		if (default_ies && default_ie_len > 0) {
+			SLSI_NET_DBG3(dev, SLSI_MLME, "Appending default_ie_len: %d\n", default_ie_len);
+			fapi_append_data(req, default_ies, default_ie_len);
+			kfree(default_ies);
+		}
 
 		if (n_channels) {
 			r = slsi_mlme_append_channel_list(sdev, dev, req, n_channels, channels, scan_type,
@@ -2401,7 +2454,11 @@ int slsi_mlme_connect(struct slsi_dev *sdev, struct net_device *dev, struct cfg8
 			     fapi_get_u16(cfm, u.mlme_connect_cfm.result_code));
 		r = -EINVAL;
 	}
-
+#if !(defined(SCSC_SEP_VERSION) && SCSC_SEP_VERSION < 11)
+	else {
+		ndev_vif->sta.drv_connect_req_ongoing = true;
+	}
+#endif
 	kfree_skb(cfm);
 	return r;
 }
@@ -2417,13 +2474,18 @@ void slsi_mlme_connect_resp(struct slsi_dev *sdev, struct net_device *dev)
 		return;
 	}
 
-	SLSI_NET_DBG1(dev, SLSI_MLME, "mlme_connect_resp(vif:%u)\n", ndev_vif->ifnum);
+	SLSI_NET_INFO(dev, "mlme_connect_resp(vif:%u)\n", ndev_vif->ifnum);
 	req = fapi_alloc(mlme_connect_res, MLME_CONNECT_RES, ndev_vif->ifnum, 0);
 	if (!req)
 		return;
 
 	cfm = slsi_mlme_req_no_cfm(sdev, dev, req);
 	WARN_ON(cfm);
+#if !(defined(SCSC_SEP_VERSION) && SCSC_SEP_VERSION < 11)
+	ndev_vif->sta.drv_connect_req_ongoing = false;
+	slsi_free_connection_params(sdev, dev);
+	slsi_set_reset_connect_attempted_flag(sdev, dev, NULL);
+#endif
 }
 
 void slsi_mlme_connected_resp(struct slsi_dev *sdev, struct net_device *dev, u16 peer_index)
@@ -2894,6 +2956,9 @@ int slsi_mlme_get_sinfo_mib(struct slsi_dev *sdev, struct net_device *dev,
 		{ SLSI_PSID_UNIFI_FRAME_RX_COUNTERS, { 1, 0 } },    /*rx good count*/
 #ifdef CONFIG_SCSC_ENHANCED_PACKET_STATS
 		{ SLSI_PSID_UNIFI_FRAME_TX_COUNTERS, { 3, 0 } },    /*tx retry count*/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		{ SLSI_PSID_UNIFI_FRAME_TX_COUNTERS, { 4, 0 } },    /*tx retry times*/
+#endif
 #endif
 #ifdef CONFIG_SCSC_WLAN_MAX_LINK_SPEED
 		{ SLSI_PSID_UNIFI_CURRENT_BSS_BANDWIDTH, { 0, 0 } }, /* bss bandwidth */
@@ -3015,6 +3080,12 @@ int slsi_mlme_get_sinfo_mib(struct slsi_dev *sdev, struct net_device *dev,
 			peer->sinfo.tx_retries = values[mib_index].u.uintValue; /*tx retry count*/
 		else
 			SLSI_ERR(sdev, "Invalid type: PSID = 0x%x\n", get_values[mib_index].psid);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		if (values[++mib_index].type == SLSI_MIB_TYPE_UINT)
+			peer->sinfo.airtime_link_metric = values[mib_index].u.uintValue; /*tx retry times*/
+		else
+			SLSI_ERR(sdev, "Invalid type: PSID = 0x%x\n", get_values[mib_index].psid);
+#endif
 #endif
 #ifdef CONFIG_SCSC_WLAN_MAX_LINK_SPEED
 		if (values[++mib_index].type == SLSI_MIB_TYPE_UINT)
@@ -3036,6 +3107,9 @@ int slsi_mlme_get_sinfo_mib(struct slsi_dev *sdev, struct net_device *dev,
 				      BIT(NL80211_STA_INFO_TX_PACKETS) | BIT(NL80211_STA_INFO_RX_PACKETS);
 #ifdef CONFIG_SCSC_ENHANCED_PACKET_STATS
 		peer->sinfo.filled |= BIT(NL80211_STA_INFO_TX_RETRIES);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		peer->sinfo.filled |= BIT(NL80211_STA_INFO_AIRTIME_LINK_METRIC);
+#endif
 #endif
 #endif
 	} else {
@@ -4940,7 +5014,6 @@ int slsi_mlme_set_country(struct slsi_dev *sdev, char *alpha2)
 	return 0;
 }
 
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 void slsi_mlme_set_country_for_recovery(struct slsi_dev *sdev)
 {
 	int ret = 0;
@@ -4969,7 +5042,6 @@ void slsi_mlme_set_country_for_recovery(struct slsi_dev *sdev)
 		SLSI_ERR(sdev, "Err setting country error = %d\n", ret);
 	SLSI_MUTEX_UNLOCK(sdev->device_config_mutex);
 }
-#endif
 
 #ifdef CONFIG_SCSC_WLAN_NUM_ANTENNAS
 /* Note : netdev_vif lock should be taken care by caller. */

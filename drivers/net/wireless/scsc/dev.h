@@ -647,6 +647,7 @@ struct slsi_vif_sta {
 	/* Only valid when the VIF is activated */
 	u8                      vif_status;
 	bool                    is_wps;
+	bool                    roam_on_disconnect;
 	u16                     eap_hosttag;
 	u16                     m4_host_tag;
 	u16                     keepalive_host_tag[SLSI_MAX_KEEPALIVE_ID];
@@ -706,6 +707,7 @@ struct slsi_vif_sta {
 	u32                     channels_5_ghz;
 #if !(defined(SCSC_SEP_VERSION) && SCSC_SEP_VERSION < 11)
 	bool                    drv_bss_selection;
+	bool                    drv_connect_req_ongoing;
 
 	/* save connection parameters in order to retry connection */
 	struct                         cfg80211_connect_params sme;
@@ -1027,9 +1029,7 @@ struct netdev_vif {
 	u8 target_ip_addr[4];
 	int enhanced_arp_host_tag[SLSI_MAX_ARP_SEND_FRAME];
 #endif
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 	struct cfg80211_ap_settings backup_settings;
-#endif
 #ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
 	atomic_t                   arp_tx_count;
 #endif
@@ -1273,10 +1273,9 @@ struct slsi_dev {
 	/* BoT */
 	atomic_t                   in_pause_state;
 	struct work_struct recovery_work_on_stop;   /* Work on failure_reset recovery*/
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 	struct work_struct recovery_work;   /* Work on subsystem_reset recovery*/
 	struct work_struct recovery_work_on_start;   /* Work on chip recovery*/
-#endif
+	struct work_struct trigger_wlan_fail_work;   /* Work on mlme cfm or ind timeout*/
 	/* Locking used to control Starting and stopping the chip */
 #ifdef CONFIG_SCSC_WLAN_MUTEX_DEBUG
 	struct slsi_mutex          start_stop_mutex;
@@ -1371,6 +1370,7 @@ struct slsi_dev {
 	struct completion          recovery_remove_completion;
 	struct completion          recovery_stop_completion;
 	struct completion          recovery_completed;
+	struct completion          service_fail_started_indication;
 	int                        recovery_status;
 	struct slsi_ssid_map       ssid_map[SLSI_SCAN_SSID_MAP_MAX];
 	bool                       band_5g_supported;
@@ -1442,6 +1442,8 @@ struct slsi_dev {
 	bool                       max_dtim_recv;
 	bool                       forced_se_7;
 	bool                       igmp_offload_activated;
+	int                        default_scan_ies_len;
+	u8                         *default_scan_ies;
 };
 
 /* Compact representation of channels a ESS has been seen on
@@ -1506,6 +1508,7 @@ int slsi_get_nan_max_ndp_instances(void);
 int slsi_get_nan_max_ndi_ifaces(void);
 int slsi_get_nan_ndp_delay(void);
 int slsi_get_nan_ndp_max_time(void);
+bool slsi_get_nan_mac_random(void);
 #endif
 void slsi_sched_scan_stopped(struct work_struct *work);
 bool slsi_dev_rtt_supported(void);

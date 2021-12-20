@@ -28,6 +28,7 @@
 char *sensorhub_dump;
 int sensorhub_dump_size;
 int sensorhub_dump_type;
+int sensorhub_dump_count;
 
 static ssize_t shub_dump_read(struct file *file, struct kobject *kobj, struct bin_attribute *battr, char *buf,
 			      loff_t off, size_t size)
@@ -75,7 +76,7 @@ static int create_dump_bin_file(struct ssp_data *data)
 	return ret;
 }
 
-void write_ssp_dump_file(struct ssp_data *data, char *dump, int dumpsize, int type)
+void write_ssp_dump_file(struct ssp_data *data, char *dump, int dumpsize, int type, int count)
 {
 	int ret;
 
@@ -90,6 +91,7 @@ void write_ssp_dump_file(struct ssp_data *data, char *dump, int dumpsize, int ty
 	}
 	memcpy_fromio(sensorhub_dump, dump, sensorhub_dump_size);
 	sensorhub_dump_type = type;
+	sensorhub_dump_count = count;
 	queue_work(data->debug_wq, &data->work_dump);
 }
 
@@ -97,12 +99,13 @@ void write_ssp_dump_file(struct ssp_data *data, char *dump, int dumpsize, int ty
 void report_dump_event_task(struct work_struct *work)
 {
 	struct ssp_data *data = container_of((struct work_struct *)work, struct ssp_data, work_dump);
-	char buffer[2];
+	char buffer[3];
 
 	buffer[0] = SENSORHUB_DUMP_NOTI_EVENT;
 	buffer[1] = sensorhub_dump_type;
+	buffer[2] = sensorhub_dump_count;
 
-	ssp_infof("type %d", buffer[1]);
+	ssp_infof("type %d, count %d", buffer[1], buffer[2]);
 	report_sensorhub_data(data, buffer);
 }
 

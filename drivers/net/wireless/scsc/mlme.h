@@ -30,6 +30,8 @@ enum slsi_ac_index_wmm_pe {
 #define SLSI_WLAN_OUI_TYPE_WFA_OSEN 0x12
 #define SLSI_WLAN_OUI_TYPE_WFA_MBO 0x16
 
+#define SLSI_WLAN_FAIL_WORK_TIMEOUT  1500 /* 1.5s timeout */
+
 /*Extended capabilities bytes*/
 #define SLSI_WLAN_EXT_CAPA2_BSS_TRANSISITION_ENABLED  (BIT(3))
 #define SLSI_WLAN_EXT_CAPA3_INTERWORKING_ENABLED        (BIT(7))
@@ -304,9 +306,7 @@ int slsi_mlme_set_scan_mode_req(struct slsi_dev *sdev, struct net_device *dev, u
 int slsi_mlme_add_range_req(struct slsi_dev *sdev, struct net_device *dev, u8 count, struct slsi_rtt_config *nl_rtt_params,
 			    u16 rtt_id, u8 *source_addr);
 int slsi_mlme_del_range_req(struct slsi_dev *sdev, struct net_device *dev, u16 count, u8 *addr, u16 rtt_id);
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 void slsi_mlme_set_country_for_recovery(struct slsi_dev *sdev);
-#endif
 #ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
 void slsi_rx_send_frame_cfm_async(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb);
 #endif

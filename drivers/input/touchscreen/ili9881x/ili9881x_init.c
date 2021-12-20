@@ -316,7 +316,7 @@ out:
 void ili_irq_wake_disable(void)
 {
 	if (atomic_read(&ilits->irq_wake_stat) == DISABLE) {
-		input_info(true, ilits->dev, "%s already diabled\n", __func__);
+		input_info(true, ilits->dev, "%s already disabled\n", __func__);
 		return;
 	}
 
@@ -735,6 +735,21 @@ static int parse_dt(void)
 		ilits->spi_mode = 0;
 	}
 
+	prop = of_find_property(np, "iliteck,lcd_rst_delay", NULL);
+	if (prop && prop->length) {
+		retval = of_property_read_u32(np, "iliteck,lcd_rst_delay", &value);
+		if (retval < 0) {
+			input_err(true, ilits->dev, "%s Unable to read iliteck,lcd_rst_delay property\n", __func__);
+			ilits->lcd_rst_delay = 0;
+		} else{
+			ilits->lcd_rst_delay = value;
+		}
+	} else {
+		ilits->lcd_rst_delay = 0;
+	}
+	input_info(true, ilits->dev, "%s: lcd_rst_delay : %d(us)\n", __func__, ilits->lcd_rst_delay);
+
+
 	if (of_property_read_u32_array(np, "iliteck,area-size", px_zone, 3)) {
 		input_err(true, ilits->dev, "%s : Failed to get zone's size\n", __func__);
 		ilits->area_indicator = 47;
@@ -877,6 +892,14 @@ static int ilitek_plat_probe(void)
 		input_err(true, ilits->dev, "%s : parse_dt fail unload driver!\n", __func__);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_BATTERY_SAMSUNG
+	if (lpcharge) {
+		input_info(true, ilits->dev, "%s: enter sleep mode in lpcharge %d\n", __func__, lpcharge);
+		ilitek_pin_control(false);
+		return -ENODEV;
+	}
+#endif
 
 #if REGULATOR_POWER
 	ilitek_plat_regulator_power_init();

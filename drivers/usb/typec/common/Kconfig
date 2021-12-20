@@ -29,3 +29,13 @@ config USB_ARCH_EXYNOS
 	  using exynos.
 	  For distinguish with Qcom
 
+config PDIC_USE_MODULE_PARAM
+	bool "Using module param"
+	depends on PDIC_NOTIFIER
+	default n
+	help
+	  If this feature is enabled, pdic_param will use module_param directly.
+	  Should not use extern variable and __setup for param.
+	  need to add cmdline in bootloader.
+	  (ex: pdic_notifier_module.xxx)
+

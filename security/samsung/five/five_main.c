@@ -23,7 +23,6 @@
 #include <linux/mount.h>
 #include <linux/mman.h>
 #include <linux/slab.h>
-#include <linux/xattr.h>
 #include <crypto/hash_info.h>
 #include <linux/ptrace.h>
 #include <linux/task_integrity.h>

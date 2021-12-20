@@ -1,6 +1,6 @@
 /***************************************************************************
  *
- * Copyright (c) 2014 - 2020 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2014 - 2021 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -49,7 +49,7 @@ static bool slsi_is_mhs_active(struct slsi_dev *sdev)
 	if (mhs_dev) {
 		ndev_vif = netdev_priv(mhs_dev);
 		SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
-		ret = ndev_vif->is_available;
+		ret = ndev_vif->activated;
 		SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 		return ret;
 	}
@@ -613,7 +613,8 @@ int slsi_scan(struct wiphy                 *wiphy,
 	}
 
 #ifdef CONFIG_SCSC_WLAN_DUAL_STATION
-	if ((SLSI_IS_VIF_INDEX_WLAN(ndev_vif) || ndev_vif->ifnum == SLSI_NET_INDEX_P2PX_SWLAN) && request->ie) {
+	if ((SLSI_IS_VIF_INDEX_WLAN(ndev_vif) || ndev_vif->ifnum == SLSI_NET_INDEX_P2PX_SWLAN) && request->ie &&
+	    !(scan_type == FAPI_SCANTYPE_P2P_SCAN_SOCIAL || scan_type == FAPI_SCANTYPE_P2P_SCAN_FULL)) {
 #else
 	if (SLSI_IS_VIF_INDEX_WLAN(ndev_vif) && request->ie) {
 #endif
@@ -980,13 +981,13 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 	center_freq = channel ? channel->center_freq : 0;
 
 	if (bssid)
-		SLSI_NET_INFO(dev, "%.*s Freq=%d vifStatus=%d CurrBssid:" MACSTR " NewBssid:" MACSTR " Qinfo:%d ieLen:%d\n",
+		SLSI_NET_INFO(dev, "%.*s Freq=%d vifStatus=%d CurrBssid:" MACSTR " NewBssid:" MACSTR " auth_type: %d Qinfo:%d ieLen:%d\n",
 			      (int)sme->ssid_len, sme->ssid, center_freq, ndev_vif->sta.vif_status,
-			      MAC2STR(peer_address), MAC2STR(bssid), sdev->device_config.qos_info, (int)sme->ie_len);
+			      MAC2STR(peer_address), MAC2STR(bssid), (int)sme->auth_type, sdev->device_config.qos_info, (int)sme->ie_len);
 	else
-		SLSI_NET_INFO(dev, "%.*s Freq=%d vifStatus=%d CurrBssid:" MACSTR " Qinfo:%d ieLen:%d\n",
-				(int)sme->ssid_len, sme->ssid, center_freq, ndev_vif->sta.vif_status,
-				MAC2STR(peer_address), sdev->device_config.qos_info, (int)sme->ie_len);
+		SLSI_NET_INFO(dev, "%.*s Freq=%d vifStatus=%d CurrBssid:" MACSTR " auth_type: %d Qinfo:%d ieLen:%d\n",
+			      (int)sme->ssid_len, sme->ssid, center_freq, ndev_vif->sta.vif_status,
+			      MAC2STR(peer_address), (int)sme->auth_type, sdev->device_config.qos_info, (int)sme->ie_len);
 
 #if IS_ENABLED(CONFIG_SCSC_WIFILOGGER)
 	SCSC_WLOG_PKTFATE_NEW_ASSOC();
@@ -1205,8 +1206,7 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 						     (int)sme->ssid_len, sme->ssid, MAC2STR(bssid));
 				else
 					SLSI_NET_ERR(dev, "cfg80211_get_bss(%.*s) Not found\n",
-							(int)sme->ssid_len, sme->ssid);
-
+						     (int)sme->ssid_len, sme->ssid);
 				/*Set previous status in case of failure */
 				ndev_vif->vif_type = prev_vif_type;
 				r = -ENOENT;
@@ -1262,9 +1262,8 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 		} else {
 			ndev_vif->delete_probe_req_ies = true; /* Delete stored Probe Req at vif deletion for STA */
 		}
-		(void)slsi_mlme_add_info_elements(sdev, dev, FAPI_PURPOSE_PROBE_REQUEST, ndev_vif->probe_req_ies,
-						  ndev_vif->probe_req_ie_len);
 	}
+	r = slsi_add_probe_ies_request(sdev, dev);
 
 	/* Sometimes netif stack takes more time to initialize and any packet
 	 * sent to stack would be dropped. This behavior is random in nature,
@@ -1273,7 +1272,7 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 	 */
 	netif_carrier_on(dev);
 	ndev_vif->sta.vif_status = SLSI_VIF_STATUS_CONNECTING;
-
+	ndev_vif->sta.roam_on_disconnect = false;
 	r = slsi_set_ext_cap(sdev, dev, sme->ie, sme->ie_len, slsi_extended_cap_mask);
 	if (r != 0)
 		SLSI_NET_ERR(dev, "Failed to set extended capability MIB: %d\n", r);
@@ -1330,7 +1329,6 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 		netif_carrier_off(dev);
 		goto exit_with_vif;
 	}
-
 	peer = slsi_peer_add(sdev, dev, (u8 *)bssid, SLSI_STA_PEER_QUEUESET + 1);
 	ndev_vif->sta.resp_id = 0;
 	if (!peer)
@@ -1640,14 +1638,24 @@ int slsi_get_station(struct wiphy *wiphy, struct net_device *dev,
 	*sinfo = peer->sinfo;
 	sinfo->generation = ndev_vif->cfg80211_sinfo_generation;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+	SLSI_NET_DBG1(dev, SLSI_CFG80211,
+		      "%pM, tx:%d, txbytes:%llu, rx:%d, rxbytes:%llu tx_fail:%d tx_retry:%d tx_retry_times:%d\n",
+#else
 	SLSI_NET_DBG1(dev, SLSI_CFG80211, "%pM, tx:%d, txbytes:%llu, rx:%d, rxbytes:%llu tx_fail:%d tx_retry:%d\n",
+#endif
 		      mac,
 		      peer->sinfo.tx_packets,
 		      peer->sinfo.tx_bytes,
 		      peer->sinfo.rx_packets,
 		      peer->sinfo.rx_bytes,
 		      peer->sinfo.tx_failed,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		      peer->sinfo.tx_retries,
+		      peer->sinfo.airtime_link_metric);
+#else
 		      peer->sinfo.tx_retries);
+#endif
 
 exit:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
@@ -2363,7 +2371,6 @@ void slsi_set_ap_mode(struct netdev_vif *ndev_vif, struct cfg80211_ap_settings *
 	}
 }
 
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 void slsi_store_settings_for_recovery(struct cfg80211_ap_settings *settings, struct netdev_vif *ndev_vif)
 {
 	ndev_vif->backup_settings = *settings;
@@ -2391,7 +2398,6 @@ void slsi_store_settings_for_recovery(struct cfg80211_ap_settings *settings, str
 		(struct ieee80211_vht_cap *)slsi_mem_dup((u8 *)settings->vht_cap, sizeof(struct ieee80211_vht_cap));
 	}
 }
-#endif
 
 #ifdef CONFIG_SCSC_WLAN_WIFI_SHARING
 static bool slsi_ap_chandef_vht_ht(struct net_device *dev, struct slsi_dev *sdev, int wifi_sharing_channel_switched)
@@ -2712,10 +2718,7 @@ exit_with_vif_mutex:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit_with_start_stop_mutex:
 	SLSI_MUTEX_UNLOCK(sdev->start_stop_mutex);
-
-#ifdef CONFIG_SCSC_WLAN_FAST_RECOVERY
 	slsi_store_settings_for_recovery(settings, ndev_vif);
-#endif
 	return r;
 }
 
@@ -2842,6 +2845,9 @@ static int slsi_p2p_mgmt_tx(const struct ieee80211_mgmt *mgmt, struct wiphy *wip
 
 				if (ndev_vif->mgmt_tx_data.exp_frame != SLSI_PA_INVALID)
 					(void)slsi_set_mgmt_tx_data(ndev_vif, 0, 0, NULL, 0);
+
+				if (subtype == SLSI_P2P_PA_GO_NEG_RSP)
+					ndev_vif->drv_in_p2p_procedure = true;
 
 				/* Change Force Schedule Duration as peer response is expected */
 				if (wait)

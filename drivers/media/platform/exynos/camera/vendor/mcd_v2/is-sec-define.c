@@ -3268,25 +3268,13 @@ i2c_write_retry_initial:
 		goto exit;
 	}
 
-	msleep(1);
-
-	/* 2. OTP mode select register control */
-	is_sensor_write8(client, SR846_FAST_SLEEP_ON_ADDR, 0x00); /* 0 : normal mode, 1 : fast sleep on */
-	is_sensor_write8(client, SR846_MODE_SEL_ADDR, 0x00); /* standby on */
-	is_sensor_write8(client, SR846_STANDBY_ADDR, 0x00);
-
-	/* Sensor team guided to put 100ms delay for preventing from otprom fail */
-	msleep(100);
-
-	is_sensor_write8(client, SR846_PLL_DISPLAY_ADDR, 0x00); /* pll display */
 	is_sensor_write8(client, SR846_CP_TRIM_H_ADDR, 0x01); /* CP TRIM_H */
 	is_sensor_write8(client, SR846_IPGM_TRIM_H_ADDR, 0x09); /* IPGM TRIM_H */
 	is_sensor_write8(client, SR846_FSYNC_OUTPUT_ENABLE_ADDR, 0x00); /* Fsync(OTP busy) output enable */
 	is_sensor_write8(client, SR846_FSYNC_OUTPUT_DRIVABILITY_ADDR, 0x07); /* Fsync(OTP busy) output drivability */
 	is_sensor_write8(client, SR846_OTP_R_W_MODE_ADDR, 0x10); /* OTP R/W mode */
-	is_sensor_write8(client, SR846_MODE_SEL_ADDR, 0x01);
 	is_sensor_write8(client, SR846_STANDBY_ADDR, 0x01); /* standby off */
-	msleep(1); /* sleep 1msec */
+	msleep(10); /* sleep 10msec */
 
 	/* Read OTP page */
 	is_sensor_write8(client, SR846_OTP_ACCESS_ADDR_H, ((SR846_OTP_BANK_SELECT_ADDR >> 8) & 0x1F));
@@ -3333,12 +3321,11 @@ crc_retry:
 
 exit:
 	/* 5. OTP read off */
-	is_sensor_write8(client, SR846_MODE_SEL_ADDR, 0x00); /* standby on */
+	is_sensor_write8(client, SR846_STREAM_OFF_ADDR, 0x0A); /* stream off */
 	is_sensor_write8(client, SR846_STANDBY_ADDR, 0x00);
 	msleep(10); /* sleep 10msec */
+	is_sensor_write8(client, SR846_OTP_MODE_ADDR, 0x00);
 	is_sensor_write8(client, SR846_OTP_R_W_MODE_ADDR, 0x00); /* display mode */
-	is_sensor_write8(client, SR846_MODE_SEL_ADDR, 0x01);
-	is_sensor_write8(client, SR846_STANDBY_ADDR, 0x01); /* standby off */
 	msleep(1); /* sleep 1msec */
 	info("%s X\n", __func__);
 	return ret;
@@ -3346,13 +3333,44 @@ exit:
 #endif /* SENSOR_OTP_SR846 */
 
 #if defined(SENSOR_OTP_4HA)
+u16 is_i2c_select_otp_bank_4ha(struct i2c_client *client) {
+	int ret = 0;
+	u8 otp_bank = 0;
+	u16 curr_page = 0;
+	
+	//The Bank details itself is present in bank-1 page-0
+	is_sensor_write8(client, S5K4HA_OTP_PAGE_SELECT_ADDR, S5K4HA_OTP_START_PAGE_BANK1);
+	ret = is_sensor_read8(client, S5K4HA_OTP_BANK_SELECT, &otp_bank);
+	if (unlikely(ret)) {
+		err("failed to is_sensor_read8 (%d). OTP Bank selection failed\n", ret);
+		goto exit;
+	}
+	info("%s otp_bank = %d\n", __func__, otp_bank);
+
+	switch(otp_bank) {
+	case 0x01 :
+		curr_page = S5K4HA_OTP_START_PAGE_BANK1;
+		break;
+	case 0x03 :
+		curr_page = S5K4HA_OTP_START_PAGE_BANK2;
+		break;
+	default :
+		curr_page = S5K4HA_OTP_START_PAGE_BANK1;
+		break;
+	}
+	is_sensor_write8(client, S5K4HA_OTP_PAGE_SELECT_ADDR, curr_page);
+exit:
+	return curr_page;
+}
+
 int is_i2c_read_otp_4ha(struct i2c_client *client, char *buf, u16 start_addr, size_t size)
 {
 	int ret = 0;
 	int index = 0;
 	u16 curr_addr = start_addr;
-	u16 curr_page = S5K4HA_OTP_START_PAGE;
+	u16 curr_page;
 
+	curr_page = is_i2c_select_otp_bank_4ha(client);
 	for (index = 0; index < size ; index++) {
 		ret = is_sensor_read8(client, curr_addr, &buf[index]); /* OTP read */
 		if (unlikely(ret)) {
@@ -3427,8 +3445,6 @@ i2c_write_retry_global:
 	is_sensor_write8(client, S5K4HA_STANDBY_ADDR, 0x00); /* standby on */
 	msleep(10); /* sleep 10msec */
 
-	/* Write OTP page */
-	is_sensor_write8(client, S5K4HA_OTP_PAGE_SELECT_ADDR, S5K4HA_OTP_START_PAGE); //select page
 	is_sensor_write8(client, S5K4HA_OTP_R_W_MODE_ADDR, 0x01); //write "read" command
 
 	retry = IS_CAL_RETRY_CNT;

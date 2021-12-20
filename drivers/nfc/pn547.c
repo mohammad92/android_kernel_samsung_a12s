@@ -120,7 +120,7 @@ struct pn547_dev *get_nfcc_dev_data(void)
 #ifdef FEATURE_SN100X
 void pn547_register_ese_shutdown(void (*func)(void))
 {
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG) && !defined(CONFIG_NFC_PVDD_LATE_ENABLE)
 	if (!lpcharge && pn547_dev)
 #else
 	if (pn547_dev)
@@ -385,13 +385,23 @@ ssize_t pn547_dev_read(struct file *filp, char __user *buf,
 			NFC_LOG_INFO("CORE_RESET_NTF: %02X%02X%02X%02X%02X%02X\n",
 				r_buf[0], r_buf[1], r_buf[2], r_buf[3], r_buf[4], r_buf[5]);
 		}
+	} else if (is_error_ntf == STATE_CORE_RESET && ret == 9) {
+		u64 ntf_hex_l = *(u64 *)r_buf;
+		u64 ntf_hex_h = *(u64 *)(r_buf + 8) & 0xFFULL;
+
+		if (ntf_hex_l == CORE_RESET_POWER_RESET_L && ntf_hex_h == CORE_RESET_POWER_RESET_H)
+			NFC_LOG_ERR("CORE_RESET_NTF: POWER_RESET\n");
+		else
+			NFC_LOG_INFO("CORE_RESET_NTF: %02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+				r_buf[0], r_buf[1], r_buf[2], r_buf[3], r_buf[4], r_buf[5],
+				r_buf[6], r_buf[7], r_buf[8]);
 	} else if (is_error_ntf == STATE_ABNORMAL_POWER && ret == 8) {
 		NFC_LOG_INFO("ABNORMAL_POWER(DPD): %02X%02X%02X%02X %02X%02X%02X%02X\n",
 			r_buf[0], r_buf[1], r_buf[2], r_buf[3], r_buf[4], r_buf[5], r_buf[6], r_buf[7]);
 	}
 
 	/* check CORE_RESET_NTF */
-	if (ret == 3 && r_buf[0] == 0x60 && r_buf[1] == 0x00 && r_buf[2] == 0x06)
+	if (ret == 3 && r_buf[0] == 0x60 && r_buf[1] == 0x00 && (r_buf[2] == 0x06 || r_buf[2] == 0x09))
 		is_error_ntf = STATE_CORE_RESET;
 	else if (ret == 3 && r_buf[0] == 0x6F && r_buf[1] == 0x2E && r_buf[2] == 0x08)
 		is_error_ntf = STATE_ABNORMAL_POWER;
@@ -1461,6 +1471,9 @@ static const struct file_operations pn547_dev_fops = {
 	.open = pn547_dev_open,
 	.release = pn547_dev_release,
 	.unlocked_ioctl = pn547_dev_ioctl,
+#if defined(CONFIG_COMPAT) && defined(CONFIG_SEC_NFC_COMPAT_IOCTL)
+	.compat_ioctl = pn547_dev_ioctl,
+#endif
 };
 
 static int pn547_parse_dt(struct device *dev,
@@ -1469,10 +1482,11 @@ static int pn547_parse_dt(struct device *dev,
 	struct device_node *np = dev->of_node;
 	int nfc_det_gpio;
 	const char *ap_str;
+	static int retry_count = 3;
 
 	nfc_det_gpio = of_get_named_gpio(np, "pn547,nfc-det-gpio", 0);
 	if (!gpio_is_valid(nfc_det_gpio)) {
-		NFC_LOG_INFO("%s : nfc-det-gpio is not set", __func__);
+		NFC_LOG_INFO("%s : nfc-det-gpio is not set\n", __func__);
 	} else {
 		gpio_request(nfc_det_gpio, "nfc_det_gpio");
 		gpio_direction_input(nfc_det_gpio);
@@ -1505,19 +1519,24 @@ static int pn547_parse_dt(struct device *dev,
 
 	pdev->clk_req_gpio = of_get_named_gpio(np, "pn547,clk_req-gpio", 0);
 	if (!gpio_is_valid(pdev->clk_req_gpio))
-		NFC_LOG_INFO("%s : clk_req-gpio is not set", __func__);
+		NFC_LOG_INFO("%s : clk_req-gpio is not set\n", __func__);
 
 	if (of_get_property(dev->of_node, "pn547,ldo_control", NULL)) {
 		pdev->nfc_pvdd = regulator_get(dev, "nfc_pvdd");
-		if (!pdev->nfc_pvdd) {
+		if (IS_ERR(pdev->nfc_pvdd)) {
 			NFC_LOG_ERR("get nfc_pvdd error\n");
 			pdev->nfc_pvdd = NULL;
-		} else
+			if (--retry_count > 0)
+				return -EPROBE_DEFER;
+			else
+				return -ENODEV;
+		} else {
 			NFC_LOG_INFO("LDO nfc_pvdd: %pK\n", pdev->nfc_pvdd);
+		}
 	} else {
 		pdev->pvdd = of_get_named_gpio(np, "pn547,pvdd-gpio", 0);
 		if (pdev->pvdd < 0) {
-			NFC_LOG_ERR("pvdd-gpio is not set.");
+			NFC_LOG_ERR("pvdd-gpio is not set.\n");
 			pdev->pvdd = 0;
 		}
 	}
@@ -1532,6 +1551,8 @@ static int pn547_parse_dt(struct device *dev,
 		if (IS_ERR(pdev->nfc_clock)) {
 			NFC_LOG_ERR("probe() clk not found\n");
 			pdev->nfc_clock = NULL;
+		} else {
+			NFC_LOG_INFO("found oscclk_nfc\n");
 		}
 	}
 
@@ -1756,8 +1777,11 @@ static int pn547_probe(struct i2c_client *client, const struct i2c_device_id *id
 	}
 	if (pn547_dev->clkctrl_addr != 0) {
 		unsigned int val = 0;
-
+#ifdef ioremap_nocache
 		pn547_dev->clkctrl = ioremap_nocache(pn547_dev->clkctrl_addr, 0x4);
+#else
+		pn547_dev->clkctrl = ioremap(pn547_dev->clkctrl_addr, 0x4);
+#endif
 		if (!pn547_dev->clkctrl) {
 			NFC_LOG_ERR("cannot remap register\n");
 			ret = -ENXIO;
@@ -2106,7 +2130,7 @@ static int __init pn547_dev_init(void)
 #else
 	NFC_LOG_INFO("Loading pn547 driver\n");
 #endif
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG) && !defined(CONFIG_NFC_PVDD_LATE_ENABLE)
 	if (lpcharge) {
 		NFC_LOG_ERR("LPM, Do not load nfc driver\n");
 		return 0;
@@ -2143,7 +2167,7 @@ static int __init pn547_dev_init(void)
 #else
 	NFC_LOG_INFO("Loading pn547 driver\n");
 #endif
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG) && !defined(CONFIG_NFC_PVDD_LATE_ENABLE)
 	if (lpcharge) {
 		NFC_LOG_ERR("LPM, Do not load nfc driver\n");
 		return 0;

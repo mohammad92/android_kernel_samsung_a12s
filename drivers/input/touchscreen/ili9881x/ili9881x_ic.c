@@ -1107,6 +1107,9 @@ void ili_get_ini_path(void)
 		if (ilits->chip->type == 0x1F) {
 			/* 7806S */
 			snprintf(chip_id, sizeof(chip_id), "%s", CHIP_ID_7806S);
+		} else if (ilits->chip->type == 0x1C) {
+			/* 7807S */
+			snprintf(chip_id, sizeof(chip_id), "%s", CHIP_ID_7807S);
 		}
 		break;
 	default:

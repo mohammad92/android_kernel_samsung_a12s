@@ -303,9 +303,13 @@ int test_abs_cap(struct sec_cmd_data *sec, struct sec_factory_test_mode *mode)
 		goto exit;
 
 	sec_cmd_set_cmd_result(sec, tcm_hcd->print_buf, strlen(tcm_hcd->print_buf));
-	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING)
-		sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "ABS_CAP");
-
+	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING) {
+		if (tcm_hcd->lcdoff_test) {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "LP_ABS_CAP");
+		} else {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "ABS_CAP");
+		}
+	}
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 
 	return retval;
@@ -314,8 +318,13 @@ exit:
 	snprintf(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf), "NG");
 	sec_cmd_set_cmd_result(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)));
 
-	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING)
-		sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "ABS_CAP");
+	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING) {
+		if (tcm_hcd->lcdoff_test) {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "LP_ABS_CAP");
+		} else {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "ABS_CAP");
+		}
+	}
 	sec->cmd_state = SEC_CMD_STATUS_FAIL;
 
 	return retval;
@@ -333,8 +342,14 @@ int test_noise(struct sec_cmd_data *sec, struct sec_factory_test_mode *mode)
 		goto exit;
 
 	sec_cmd_set_cmd_result(sec, tcm_hcd->print_buf, strlen(tcm_hcd->print_buf));
-	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING)
-		sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "NOISE");
+	
+	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING) {
+		if (tcm_hcd->lcdoff_test) {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "LP_NOISE");
+		} else {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "NOISE");
+		}
+	}
 
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 
@@ -344,8 +359,13 @@ exit:
 	snprintf(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf), "NG");
 	sec_cmd_set_cmd_result(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)));
 
-	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING)
-		sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "NOISE");
+	if (sec->cmd_all_factory_state == SEC_CMD_STATUS_RUNNING) {
+		if (tcm_hcd->lcdoff_test) {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "LP_NOISE");
+		} else {
+			sec_cmd_set_cmd_result_all(sec, tcm_hcd->print_buf, strnlen(tcm_hcd->print_buf, sizeof(tcm_hcd->print_buf)), "NOISE");
+		}
+	}
 	sec->cmd_state = SEC_CMD_STATUS_FAIL;
 
 	return retval;
@@ -452,7 +472,7 @@ exit:
 
 
 #define NOISE_DELTA_MAX 100
-static int syna_tcm_get_face_area(int *data_sum)
+int syna_tcm_get_face_area(int *data_sum, struct sec_factory_test_mode *mode)
 {
 	int retval;
 	unsigned char *resp_buf;
@@ -536,10 +556,17 @@ static int syna_tcm_get_face_area(int *data_sum)
 	}
     idx = row_start * cols + col_start;
     *data_sum = 0;
+
     for (r = row_start; r <= row_end; r++) {
       for (c = col_start; c <= col_end; c++) {
             int data;
             data = (short)le2_to_uint(&resp_buf[idx * 2]);
+
+			if (r == row_start && c == col_start)
+				mode->min = mode->max = data;
+			mode->min = min(mode->min, (short)data);
+			mode->max = max(mode->max, (short)data);
+
             *data_sum += data;
             if (data > NOISE_DELTA_MAX) {
                 retval = -EINVAL;
@@ -564,8 +591,9 @@ exit:
 int get_proximity() {
 	
 	int sum, ret;
+	struct sec_factory_test_mode mode;
 	printk("[sec_input] %s %d\n",__func__,__LINE__);
-	ret = syna_tcm_get_face_area(&sum);
+	ret = syna_tcm_get_face_area(&sum, &mode);
 	if(ret == 0) {
 		return sum;
 	}

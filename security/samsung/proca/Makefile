@@ -2,6 +2,8 @@ SHELL := /bin/bash
 
 ifeq ($(CONFIG_MACH_MT6853),y)
     KERNEL := 4_14
+else ifeq ($(CONFIG_MACH_MT6833),y)
+    KERNEL := 4_14
 else ifeq ($(CONFIG_MACH_MT6768),y)
     KERNEL := 4_14
 endif

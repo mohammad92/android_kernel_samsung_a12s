@@ -210,6 +210,13 @@ enum VOTER_ENUM {
 #define HV_CHARGER_STATUS_STANDARD2	20000 /* mW */
 #define HV_CHARGER_STATUS_STANDARD3 24500 /* mW */
 #define HV_CHARGER_STATUS_STANDARD4 40000 /* mW */
+
+enum battery_misc_test {
+	MISC_TEST_RESET = 0,
+	MISC_TEST_DISPLAY,
+	MISC_TEST_MAX,
+};
+
 enum {
 	NORMAL_TA,
 	AFC_9V_OR_15W,
@@ -1093,6 +1100,7 @@ struct sec_battery_info {
 	/* test mode */
 	int test_mode;
 	bool factory_mode;
+	bool display_test;
 	bool factory_mode_boot_on;
 	bool store_mode;
 
@@ -1232,6 +1240,9 @@ extern void select_pdo(int num);
 extern int sec_pd_select_pps(int num, int ppsVol, int ppsCur);
 extern int sec_pd_get_apdo_max_power(unsigned int *pdo_pos, unsigned int *taMaxVol, unsigned int *taMaxCur, unsigned int *taMaxPwr);
 #endif
+#if defined(CONFIG_BATTERY_CISD)
+extern int sec_pd_register_chg_info_cb(void *cb);
+#endif
 
 extern int adc_read(struct sec_battery_info *battery, int channel);
 extern void adc_init(struct platform_device *pdev, struct sec_battery_info *battery);
@@ -1302,6 +1313,9 @@ extern int sec_battery_update_data(const char* file_path);
 extern bool sec_bat_cisd_check(struct sec_battery_info *battery);
 extern void sec_battery_cisd_init(struct sec_battery_info *battery);
 extern void set_cisd_pad_data(struct sec_battery_info *battery, const char* buf);
+extern void count_cisd_pad_data(struct cisd *cisd, unsigned int pad_id);
+extern void set_cisd_power_data(struct sec_battery_info *battery, const char *buf);
+extern void set_cisd_pd_data(struct sec_battery_info *battery, const char *buf);
 #endif
 
 #if defined(CONFIG_WIRELESS_AUTH)

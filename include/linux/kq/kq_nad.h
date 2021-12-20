@@ -26,12 +26,16 @@
 #define KQ_NAD_MAX_CMD_NAME		10
 #define KQ_NAD_MAX_CMD_SIZE		3
 
+#define KQ_NADC_MAX_CMD_SIZE		2
+
 #define KQ_NAD_FLAG_SMD_FIRST		1005
 #define KQ_NAD_FLAG_SMD_SECOND		1006
 #define KQ_NAD_FLAG_ACAT_FIRST		5001
 #define KQ_NAD_FLAG_ACAT_SECOND		5002
 #define KQ_NAD_FLAG_EXTEND_FIRST	1007
 #define KQ_NAD_FLAG_EXTEND_SECOND	1008
+#define KQ_NAD_FLAG_CUSTOM_FIRST	1010
+#define KQ_NAD_FLAG_CUSTOM_SECOND	1011
 
 #define KQ_NAD_BIT_PASS			0x00002000
 
@@ -43,6 +47,9 @@
 #define KQ_NAD_MAGIC_NADX_TEST			0x000000A5
 #define KQ_NAD_MAGIC_NADX_DONE			0x0000005A
 #define KQ_NAD_MAGIC_REBOOT				0x5A000000
+
+#define KQ_NAD_MAGIC_NADC_TEST			0x003C0000
+
 #define KQ_NAD_MAGIC_CONSTANT_XOR		0xABCDABCD
 
 #define KQ_NAD_CHECK_NAD_STATUS			(0x1)
@@ -52,6 +59,8 @@
 #define KQ_NAD_CHECK_DRAM_STATUS		(0x10)
 #define KQ_NAD_CHECK_NADX_STATUS		(0x20)
 #define KQ_NAD_CHECK_NADX_SECOND_STATUS	(0x40)
+#define KQ_NAD_CHECK_NADC_STATUS		(0x80)
+#define KQ_NAD_CHECK_NADC_SECOND_STATUS	(0x100)
 
 #define KQ_NAD_LOOP_COUNT_NADX		444
 
@@ -97,6 +106,11 @@ enum {
 };
 
 enum {
+	KQ_NAD_SHUTDOWN_DISABLE = 0,
+	KQ_NAD_SHUTDOWN_ENABLE,
+};
+
+enum {
 	KQ_NAD_INFORM1_LEVEL = 0,
 	KQ_NAD_INFORM1_STATE = 5,
 	KQ_NAD_INFORM1_BLOCK = 8,
@@ -129,6 +143,8 @@ enum {
 	KQ_NAD_SYSFS_FAC_RESULT,
 	KQ_NAD_SYSFS_NADX_RUN,
 #endif
+	KQ_NAD_SYSFS_NADC_RESULT,
+	KQ_NAD_SYSFS_NADC_RUN,
 	KQ_NAD_SYSFS_REBOOT,
 	KQ_NAD_SYSFS_END,
 };
@@ -164,6 +180,7 @@ struct kq_nad_mparam_correlation {
 
 struct kq_nad_env {
 	unsigned int status;
+	unsigned int shutdown;
 	void __iomem *inform4;
 	void __iomem *inform5;
 	struct kq_nad_mparam_inform smd;
@@ -172,6 +189,8 @@ struct kq_nad_env {
 	struct kq_nad_mparam_inform acat_second;
 	struct kq_nad_mparam_inform nadx;
 	struct kq_nad_mparam_inform nadx_second;
+	struct kq_nad_mparam_inform nadc;
+	struct kq_nad_mparam_inform nadc_second;
 
 #if IS_ENABLED(CONFIG_SEC_KQ_NAD_55)
 	unsigned int rework;

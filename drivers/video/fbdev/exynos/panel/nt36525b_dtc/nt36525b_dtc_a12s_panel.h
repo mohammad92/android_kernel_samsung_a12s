@@ -1438,7 +1438,7 @@ static u8 NT36525B_DTC_A12S_I2C_INIT[] = {
 	0x0E, 0x26,
 	0x09, 0xBE,
 	0x02, 0x6B,
-	0x03, 0x0D,
+	0x03, 0x27,
 	0x11, 0x74,
 	0x04, 0x05,
 	0x05, 0xCC,
@@ -1521,8 +1521,79 @@ struct common_panel_info nt36525b_dtc_a12s_default_panel_info = {
 	.i2c_data = &nt36525b_dtc_a12s_i2c_data,
 };
 
+static DEFINE_PANEL_MDELAY(a12s_wait_i2c_init, 2);
+
+static u8 A12S_KTZ8864_I2C_INIT_1[] = {
+	0x0C, 0x2C,
+	0x0D, 0x26,
+	0x0E, 0x26,
+	0x09, 0x9C,
+};
+
+static u8 A12S_KTZ8864_I2C_INIT_2[] = {
+	0x09, 0x9E,
+	0x02, 0x6B,
+	0x03, 0x0D,
+	0x11, 0x74,
+	0x04, 0x05,
+	0x05, 0xCC,
+	0x10, 0x67,
+	0x08, 0x13,
+};
+
+static u8 A12S_KTZ8864_I2C_EXIT_VSN[] = {
+	0x09, 0x9C,
+};
+
+static u8 A12S_KTZ8864_I2C_EXIT_VSP[] = {
+	0x09, 0x18,
+};
+
+static u8 A12S_KTZ8864_I2C_EXIT_BLEN[] = {
+	0x08, 0x00,
+};
+
+static DEFINE_STATIC_PACKET(a12s_ktz8864_i2c_init_1, I2C_PKT_TYPE_WR, A12S_KTZ8864_I2C_INIT_1, 0);
+static DEFINE_STATIC_PACKET(a12s_ktz8864_i2c_init_2, I2C_PKT_TYPE_WR, A12S_KTZ8864_I2C_INIT_2, 0);
+static DEFINE_STATIC_PACKET(a12s_ktz8864_i2c_exit_vsn, I2C_PKT_TYPE_WR, A12S_KTZ8864_I2C_EXIT_VSN, 0);
+static DEFINE_STATIC_PACKET(a12s_ktz8864_i2c_exit_vsp, I2C_PKT_TYPE_WR, A12S_KTZ8864_I2C_EXIT_VSP, 0);
+static DEFINE_STATIC_PACKET(a12s_ktz8864_i2c_exit_blen, I2C_PKT_TYPE_WR, A12S_KTZ8864_I2C_EXIT_BLEN, 0);
+
+static void *a12s_ktz8864_init_cmdtbl[] = {
+	&PKTINFO(a12s_ktz8864_i2c_init_1),
+	&DLYINFO(a12s_wait_i2c_init),
+	&PKTINFO(a12s_ktz8864_i2c_init_2),
+};
+
+static void *a12s_ktz8864_exit_cmdtbl[] = {
+	&PKTINFO(a12s_ktz8864_i2c_exit_vsn),
+	&DLYINFO(a12s_wait_blic_off),
+	&PKTINFO(a12s_ktz8864_i2c_exit_vsp),
+	&DLYINFO(a12s_wait_blic_off),
+	&PKTINFO(a12s_ktz8864_i2c_exit_blen),
+};
+
+static struct seqinfo a12s_blic_ktz8864_seqtbl[MAX_PANEL_SEQ] = {
+	[PANEL_I2C_INIT_SEQ] = SEQINFO_INIT("i2c-init-seq-ktz8864", a12s_ktz8864_init_cmdtbl),
+	[PANEL_I2C_EXIT_SEQ] = SEQINFO_INIT("i2c-exit-seq-ktz8864", a12s_ktz8864_exit_cmdtbl),
+};
+
+
+static int __init a12s_blic_init(void)
+{
+	if (get_blic_type() == 1) {
+		pr_info("%s BLIC_TYPE_KINETIC_KTZ8864\n", __func__);
+		a12s_seqtbl[PANEL_I2C_INIT_SEQ] = a12s_blic_ktz8864_seqtbl[PANEL_I2C_INIT_SEQ];
+		a12s_seqtbl[PANEL_I2C_EXIT_SEQ] = a12s_blic_ktz8864_seqtbl[PANEL_I2C_EXIT_SEQ];
+	}
+
+	return 0;
+}
+
 static int __init nt36525b_dtc_a12s_panel_init(void)
 {
+	a12s_blic_init();
+
 	register_common_panel(&nt36525b_dtc_a12s_default_panel_info);
 
 	return 0;

@@ -171,6 +171,7 @@
 
 #ifdef CONFIG_SCSC_WLAN_DYNAMIC_ITO
 #define CMD_SET_ITO "SET_ITO"
+#define CMD_ENABLE_ITO "ENABLE_ITO"
 #endif
 
 #define CMD_ELNA_BYPASS              "ELNA_BYPASS"
@@ -5217,6 +5218,7 @@ static const struct slsi_ioctl_fn slsi_ioctl_fn_table[] = {
 
 #ifdef CONFIG_SCSC_WLAN_DYNAMIC_ITO
 	{ CMD_SET_ITO,                      slsi_set_ito },
+	{ CMD_ENABLE_ITO,                   slsi_enable_ito },
 #endif
 	{ CMD_GET_CU,                       slsi_get_cu },
 	{ CMD_ELNA_BYPASS_INT,              slsi_elna_bypass_int },
